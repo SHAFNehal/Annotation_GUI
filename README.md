@@ -62,6 +62,8 @@ When you open a folder, the application creates:
   - `coco/annotations.json` - COCO format
   - `yolo/labels/*.txt` + `classes.txt` - YOLO format
 
+## For more details, check [QUICKSTART.md](QUICKSTART.md)
+
 ## Requirements
 
 - Python 3.8+
@@ -72,3 +74,7 @@ When you open a folder, the application creates:
 ## License
 
 MIT License
+
+## Funding
+
+This project was developed with funding support from the United States Department of Agriculture (USDA).

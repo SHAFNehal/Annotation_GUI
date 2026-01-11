@@ -8,12 +8,18 @@
    - Download from https://www.python.org/downloads/
    - Make sure to check "Add Python to PATH" during installation
 
-2. **Install dependencies:**
+2. **Set up a virtual environment** (optional, but recommended)
+   - Create a virtual environment: `python -m venv venv`
+   - Activate the virtual environment:
+     - Windows: `venv\Scripts\activate`
+     - Linux/Mac: `source venv/bin/activate`
+
+3. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **Run the application:**
+4. **Run the application:**
    ```bash
    python main.py
    ```
