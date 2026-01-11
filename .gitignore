@@ -53,3 +53,4 @@ PROJECT_SUMMARY.md
 .env.production
 images/
 exports/
+*.code-workspace
