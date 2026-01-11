@@ -29,7 +29,6 @@ dist/
 project.json
 project.json.bak
 project.json.tmp
-exports/
 
 # IDE
 .vscode/
