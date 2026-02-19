@@ -134,6 +134,55 @@ class ProjectManager:
             print(f"Error saving project: {e}")
             return False
             
+    def sync_new_images(self) -> tuple:
+        """Sync the project image list against the image folder on disk.
+
+        - Removes entries (and their annotations) for images that no longer exist.
+        - Adds entries for image files that are new to the folder.
+
+        Returns (new_count, removed_count).
+        """
+        if not self.project or not self.project.image_folder:
+            return (0, 0)
+        folder_path = Path(self.project.image_folder)
+        if not folder_path.exists():
+            return (0, 0)
+
+        # --- Remove deleted images ---
+        before_count = len(self.project.images)
+        self.project.images = [
+            img for img in self.project.images
+            if Path(img.filepath).exists()
+        ]
+        removed_count = before_count - len(self.project.images)
+
+        # Reset current index if it's now out of range
+        if self.current_image_index >= len(self.project.images):
+            self.current_image_index = max(0, len(self.project.images) - 1)
+
+        # --- Add new images ---
+        existing_filenames = {img.filename for img in self.project.images}
+        image_files = self._find_image_files(folder_path)
+
+        new_count = 0
+        for img_path in image_files:
+            if img_path.name not in existing_filenames:
+                try:
+                    with Image.open(img_path) as img:
+                        width, height = img.size
+                    image_data = ImageData(
+                        filename=img_path.name,
+                        filepath=str(img_path.absolute()),
+                        width=width,
+                        height=height
+                    )
+                    self.project.images.append(image_data)
+                    new_count += 1
+                except Exception:
+                    continue
+
+        return (new_count, removed_count)
+
     def get_current_image(self) -> Optional[ImageData]:
         """Get current image data"""
         if not self.project or self.current_image_index < 0:

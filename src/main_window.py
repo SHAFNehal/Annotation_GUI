@@ -1,4 +1,5 @@
 """Main application window"""
+import json
 from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QKeySequence, QShortcut, QColor
 from PySide6.QtWidgets import (
@@ -274,26 +275,42 @@ class MainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "Select Image Folder")
         if not folder:
             return
-        
-        # Check if project.json already exists
-        project_path = Path(folder).parent / "project.json"
+
+        folder_path = Path(folder)
+        project_path = folder_path.parent / "project.json"
+
+        # Check if the existing project.json (if any) belongs to this specific folder
+        existing_project_matches = False
         if project_path.exists():
-            # Load existing project (will import annotations from exports)
+            try:
+                with open(project_path, 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+                stored_folder = Path(existing_data.get("image_folder", "")).resolve()
+                if stored_folder == folder_path.resolve():
+                    existing_project_matches = True
+            except Exception:
+                pass
+
+        if existing_project_matches:
+            # Load existing project for this folder, then sync additions/deletions
             if self.project_manager.load_project(str(project_path)):
+                new_count, removed_count = self.project_manager.sync_new_images()
                 self.load_project_ui()
-                QMessageBox.information(self, "Project Loaded", 
-                    f"Loaded existing project with {len(self.project_manager.project.images)} images.\n"
-                    "Existing annotations from exports folder have been imported if available.")
+                msg = f"Loaded existing project with {len(self.project_manager.project.images)} images."
+                if new_count > 0:
+                    msg += f"\n{new_count} new image(s) added to the project."
+                if removed_count > 0:
+                    msg += f"\n{removed_count} deleted image(s) and their annotations removed."
+                QMessageBox.information(self, "Project Loaded", msg)
             else:
                 QMessageBox.warning(self, "Error", "Failed to load existing project.")
         else:
-            # Create new project (will import annotations from exports if available)
+            # Different folder or no project.json yet — create a fresh project
             if self.project_manager.create_project(folder, str(project_path)):
                 self.load_project_ui()
-                # Check if annotations were imported
                 total_annotations = sum(len(img.annotations) for img in self.project_manager.project.images)
                 if total_annotations > 0:
-                    QMessageBox.information(self, "Annotations Imported", 
+                    QMessageBox.information(self, "Annotations Imported",
                         f"Found and imported {total_annotations} existing annotations from exports folder.")
             else:
                 QMessageBox.warning(self, "Error", "Failed to load images from folder")
