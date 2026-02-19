@@ -1,0 +1,64 @@
+name: Build Executables
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            artifact_name: AnnotationGUI-linux
+            executable: dist/AnnotationGUI
+          - os: windows-latest
+            artifact_name: AnnotationGUI-windows
+            executable: dist/AnnotationGUI.exe
+          - os: macos-latest
+            artifact_name: AnnotationGUI-macos
+            executable: dist/AnnotationGUI
+
+    runs-on: ${{ matrix.os }}
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller PySide6 Pillow
+
+      - name: Build executable (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: |
+          pyinstaller --onefile --windowed \
+            --name "AnnotationGUI" \
+            --add-data "src:src" \
+            main.py
+
+      - name: Build executable (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          pyinstaller --onefile --windowed `
+            --name "AnnotationGUI" `
+            --add-data "src;src" `
+            main.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.executable }}
+          retention-days: 30
