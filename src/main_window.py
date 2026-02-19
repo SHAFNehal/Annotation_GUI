@@ -151,7 +151,7 @@ class MainWindow(QMainWindow):
         
         # Zoom
         fit_btn = QPushButton("Refresh")
-        fit_btn.clicked.connect(self.fit_to_window)
+        fit_btn.clicked.connect(self.refresh_project)
         toolbar.addWidget(fit_btn)
         
     def create_status_bar(self):
@@ -623,26 +623,95 @@ class MainWindow(QMainWindow):
         self.delete_class(class_id)
         
     def delete_class(self, class_id: int):
-        """Delete a class"""
-        # Check if used
-        used = False
-        for img_data in self.project_manager.project.images:
-            for ann in img_data.annotations:
-                if ann.class_id == class_id:
-                    used = True
-                    break
-            if used:
-                break
-        if used:
-            QMessageBox.warning(self, "Cannot Delete", "This class is used by annotations.")
+        """Delete a class, offering reassign or delete-annotations options when in use"""
+        project = self.project_manager.project
+        if not project:
             return
-        # Remove class
-        self.project_manager.project.classes = [c for c in self.project_manager.project.classes if c.id != class_id]
-        # Reindex
-        for i, cls in enumerate(self.project_manager.project.classes):
+
+        cls_to_delete = self.project_manager.get_class(class_id)
+        if not cls_to_delete:
+            return
+
+        # Count affected annotations
+        affected_images = []
+        affected_count = 0
+        for img_data in project.images:
+            anns = [a for a in img_data.annotations if a.class_id == class_id]
+            if anns:
+                affected_images.append((img_data, anns))
+                affected_count += len(anns)
+
+        if affected_count > 0:
+            other_classes = [c for c in project.classes if c.id != class_id]
+
+            if other_classes:
+                # Build choice dialog: Reassign / Delete annotations / Cancel
+                msg = QMessageBox(self)
+                msg.setWindowTitle("Class In Use")
+                msg.setText(
+                    f'Class "{cls_to_delete.name}" is used by {affected_count} annotation(s).\n'
+                    "What would you like to do?"
+                )
+                reassign_btn = msg.addButton("Reassign to another class…", QMessageBox.ActionRole)
+                delete_anns_btn = msg.addButton("Delete annotations too", QMessageBox.DestructiveRole)
+                msg.addButton(QMessageBox.Cancel)
+                msg.exec_()
+                clicked = msg.clickedButton()
+
+                if clicked == reassign_btn:
+                    # Ask which class to reassign to
+                    class_names = [f"{c.id}: {c.name}" for c in other_classes]
+                    choice, ok = QInputDialog.getItem(
+                        self, "Reassign Class",
+                        "Select class to reassign annotations to:",
+                        class_names, 0, False
+                    )
+                    if not ok:
+                        return
+                    target_cls = other_classes[class_names.index(choice)]
+                    for img_data, anns in affected_images:
+                        for ann in anns:
+                            ann.class_id = target_cls.id
+                            ann.class_name = target_cls.name
+
+                elif clicked == delete_anns_btn:
+                    # Remove affected annotations
+                    for img_data, anns in affected_images:
+                        for ann in anns:
+                            img_data.annotations.remove(ann)
+                    # Reload current image in scene to reflect removals
+                    self.set_current_image(self.project_manager.current_image_index)
+                else:
+                    return  # Cancel
+
+            else:
+                # No other classes to reassign to — only option is to delete annotations
+                reply = QMessageBox.question(
+                    self, "Class In Use",
+                    f'Class "{cls_to_delete.name}" is used by {affected_count} annotation(s) '
+                    "and there are no other classes to reassign to.\n\n"
+                    "Delete the class and all its annotations?",
+                    QMessageBox.Yes | QMessageBox.Cancel
+                )
+                if reply != QMessageBox.Yes:
+                    return
+                for img_data, anns in affected_images:
+                    for ann in anns:
+                        img_data.annotations.remove(ann)
+                self.set_current_image(self.project_manager.current_image_index)
+
+        # Remove class and reindex
+        project.classes = [c for c in project.classes if c.id != class_id]
+        for i, cls in enumerate(project.classes):
             cls.id = i
+        # Fix any annotation class_ids that shifted due to reindex
+        for img_data in project.images:
+            for ann in img_data.annotations:
+                for cls in project.classes:
+                    if cls.name == ann.class_name:
+                        ann.class_id = cls.id
+                        break
         self.update_class_list()
-        # Update box colors in case any boxes were using this class
         if self.scene:
             self.scene.update_box_colors()
         
@@ -663,6 +732,64 @@ class MainWindow(QMainWindow):
         self.save_current_annotations()
         QMessageBox.information(self, "Saved", "Project saved successfully.")
         
+    def refresh_project(self):
+        """Sync directory changes (new/deleted images) and refresh the current view"""
+        if not self.project_manager.project:
+            if self.viewer:
+                self.viewer.fit_to_window()
+            return
+
+        # Remember current position
+        current_index = self.project_manager.current_image_index
+        current_filename = None
+        current_img = self.project_manager.get_current_image()
+        if current_img:
+            current_filename = current_img.filename
+
+        # Save annotations for the current image before syncing
+        self.save_current_annotations()
+
+        # Sync directory
+        new_count, removed_count = self.project_manager.sync_new_images()
+
+        # Rebuild image list
+        self.image_list.clear()
+        for i, img_data in enumerate(self.project_manager.project.images):
+            item = QListWidgetItem(img_data.filename)
+            item.setData(Qt.UserRole, i)
+            if img_data.annotations:
+                item.setText(f"\u2713 {img_data.filename}")
+            self.image_list.addItem(item)
+
+        self.update_status()
+
+        # Try to stay on the same file; fall back to clamped index
+        new_index = current_index
+        if current_filename:
+            for i, img_data in enumerate(self.project_manager.project.images):
+                if img_data.filename == current_filename:
+                    new_index = i
+                    break
+            else:
+                new_index = min(current_index, len(self.project_manager.project.images) - 1)
+
+        new_index = max(0, new_index)
+        self.set_current_image(new_index)
+
+        if self.viewer:
+            self.viewer.fit_to_window()
+
+        # Report changes in status bar
+        parts = []
+        if new_count:
+            parts.append(f"{new_count} new image(s) added")
+        if removed_count:
+            parts.append(f"{removed_count} deleted image(s) removed")
+        if parts:
+            self.statusBar().showMessage("Refresh: " + ", ".join(parts), 4000)
+        else:
+            self.statusBar().showMessage("Refresh: directory up to date", 2000)
+
     def fit_to_window(self):
         """Fit image to window"""
         if self.viewer:
